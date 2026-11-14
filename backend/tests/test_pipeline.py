@@ -152,3 +152,23 @@ def test_jobs_cut_off_by_shutdown_are_marked_failed(tmp_path):
         assert job["status"] == "failed"
         assert "interrupted" in job["error"]
         assert client.post(f"/jobs/{stuck.id}/rerun").status_code == 202
+
+
+def test_nsfw_exclusion_is_optional_per_request(tmp_path):
+    with make_client(tmp_path) as (client, _):
+        def negative(**body):
+            return client.post("/jobs", json={"prompt": "1girl", **body}).json()["negative"]
+
+        assert negative().startswith("nsfw, worst quality")
+        assert "nsfw" not in negative(exclude_nsfw=False)
+        assert negative(negative="blurry") == "nsfw, blurry"
+        assert negative(negative="blurry", exclude_nsfw=False) == "blurry"
+        assert negative(negative="NSFW, blurry") == "NSFW, blurry"
+
+
+def test_rerun_keeps_the_original_negative_as_is(tmp_path):
+    with make_client(tmp_path) as (client, _):
+        original = wait_done(client, client.post("/jobs", json={"prompt": "1girl", "exclude_nsfw": False}).json()["id"])
+        again = wait_done(client, client.post(f"/jobs/{original['id']}/rerun").json()["id"])
+        assert again["negative"] == original["negative"]
+        assert "nsfw" not in again["negative"]

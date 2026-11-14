@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from .image import GenerationParams, ImageBackend
 from .store import JobStore
-from .tagging.ollama_tagger import NEGATIVE_PROMPT, TagResult
+from .tagging.ollama_tagger import NEGATIVE_PROMPT, NSFW_NEGATIVE_TAG, TagResult
 
 Tagger = Callable[[str, "int | str"], TagResult]
 
@@ -29,6 +29,7 @@ class JobRequest(BaseModel):
     request: str | None = Field(None, description="한국어 자연어 요청. LLM이 Danbooru 태그로 바꾼다.")
     prompt: str | None = Field(None, description="이미 완성된 태그 프롬프트. 주면 LLM을 건너뛴다.")
     negative: str | None = None
+    exclude_nsfw: bool = Field(True, description="True 면 제외 프롬프트 앞에 'nsfw' 를 붙인다.")
     seed: int | None = None
     width: int = Field(832, ge=256, le=2048, multiple_of=8)
     height: int = Field(1216, ge=256, le=2048, multiple_of=8)
@@ -40,6 +41,12 @@ class JobRequest(BaseModel):
         if bool(self.request) == bool(self.prompt):
             raise ValueError("give exactly one of 'request' or 'prompt'")
         return self
+
+
+def build_negative(req: JobRequest) -> str:
+    negative = req.negative or NEGATIVE_PROMPT
+    already = NSFW_NEGATIVE_TAG in [t.strip().lower() for t in negative.split(",")]
+    return f"{NSFW_NEGATIVE_TAG}, {negative}" if req.exclude_nsfw and not already else negative
 
 
 class Job(BaseModel):
@@ -85,6 +92,7 @@ class Pipeline:
             JobRequest(
                 prompt=original.positive,
                 negative=original.negative,
+                exclude_nsfw=False,  # 저장된 제외 프롬프트를 그대로 쓴다.
                 seed=None if new_seed else original.seed,
                 width=original.width,
                 height=original.height,
@@ -101,7 +109,7 @@ class Pipeline:
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds"),
             request=req.request,
             positive=req.prompt,
-            negative=req.negative or NEGATIVE_PROMPT,
+            negative=build_negative(req),
             seed=req.seed if req.seed is not None else random.randrange(2**32),
             width=req.width,
             height=req.height,

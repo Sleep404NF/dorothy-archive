@@ -18,8 +18,10 @@ from dataclasses import dataclass, field
 
 FIELDS = ["subject", "character", "appearance", "clothing", "pose_expression", "composition", "background"]
 QUALITY_TAGS = ["masterpiece", "best quality", "newest", "absurdres", "highres"]
+# "nsfw" 는 여기 넣지 않는다. 요청의 exclude_nsfw 옵션에 따라 파이프라인이 앞에 붙인다.
+NSFW_NEGATIVE_TAG = "nsfw"
 NEGATIVE_PROMPT = (
-    "nsfw, worst quality, old, early, low quality, lowres, signature, username, logo, "
+    "worst quality, old, early, low quality, lowres, signature, username, logo, "
     "bad hands, mutated hands, watermark, text"
 )
 SYSTEM_PROMPT_PATH = pathlib.Path(__file__).resolve().parents[3] / "prompts" / "danbooru_tagger.system.md"
