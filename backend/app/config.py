@@ -19,6 +19,9 @@ class Settings:
     )
     ollama_host: str = field(default_factory=lambda: os.getenv("DOROTHY_OLLAMA_HOST", "http://127.0.0.1:11434"))
     ollama_model: str = field(default_factory=lambda: os.getenv("DOROTHY_OLLAMA_MODEL", "gemma3:4b"))
+    db_path: pathlib.Path = field(
+        default_factory=lambda: pathlib.Path(os.getenv("DOROTHY_DB", REPO_ROOT / "data" / "dorothy.db"))
+    )
     output_dir: pathlib.Path = field(
         default_factory=lambda: pathlib.Path(os.getenv("DOROTHY_OUTPUT_DIR", REPO_ROOT / "outputs"))
     )

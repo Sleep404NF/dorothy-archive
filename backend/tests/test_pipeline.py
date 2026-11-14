@@ -10,6 +10,7 @@ from app.config import Settings
 from app.image.base import GeneratedImage, ImageBackend
 from app.main import create_app
 from app.pipeline import Pipeline
+from app.store import JobStore
 from app.tagging.ollama_tagger import TagResult
 
 
@@ -35,15 +36,15 @@ class FakeBackend(ImageBackend):
 
 
 @contextlib.contextmanager
-def make_client(tmp_path, **backend_kwargs):
-    events = []
+def make_client(tmp_path, events=None, **backend_kwargs):
+    events = [] if events is None else events
 
     def tagger(text, keep_alive):
         events.append(("tag", text, keep_alive))
         return TagResult(request=text, tags={"subject": ["1girl", "solo"]})
 
-    settings = Settings(output_dir=tmp_path)
-    pipeline = Pipeline(FakeBackend(events, **backend_kwargs), tagger, tmp_path)
+    settings = Settings(output_dir=tmp_path, db_path=tmp_path / "test.db")
+    pipeline = Pipeline(FakeBackend(events, **backend_kwargs), tagger, tmp_path, JobStore(settings.db_path))
     with TestClient(create_app(settings, pipeline)) as client:
         yield client, events
 
@@ -102,3 +103,52 @@ def test_request_and_prompt_are_mutually_exclusive(tmp_path):
     with make_client(tmp_path) as (client, _):
         assert client.post("/jobs", json={}).status_code == 422
         assert client.post("/jobs", json={"request": "a", "prompt": "b"}).status_code == 422
+
+
+def test_history_survives_restart_newest_first(tmp_path):
+    with make_client(tmp_path) as (client, _):
+        first = wait_done(client, client.post("/jobs", json={"request": "첫 번째", "seed": 1}).json()["id"])
+        second = wait_done(client, client.post("/jobs", json={"prompt": "1boy", "seed": 2}).json()["id"])
+
+    with make_client(tmp_path) as (client, _):
+        page = client.get("/jobs").json()
+        assert page["total"] == 2
+        assert [j["id"] for j in page["items"]] == [second["id"], first["id"]]
+        assert client.get(f"/jobs/{first['id']}").json() == first
+        assert client.get("/jobs", params={"limit": 1, "offset": 1}).json()["items"][0]["id"] == first["id"]
+        assert client.get("/jobs", params={"status": "failed"}).json() == {"total": 0, "items": []}
+
+
+def test_rerun_reuses_prompt_and_seed_without_llm(tmp_path):
+    with make_client(tmp_path) as (client, events):
+        original = wait_done(client, client.post("/jobs", json={"request": "은발 소녀", "seed": 9}).json()["id"])
+        events.clear()
+
+        res = client.post(f"/jobs/{original['id']}/rerun")
+        assert res.status_code == 202
+        again = wait_done(client, res.json()["id"])
+
+        assert events == [("generate", original["positive"], 9)]
+        assert again["rerun_of"] == original["id"]
+        assert (again["request"], again["tags"]) == (original["request"], original["tags"])
+        assert again["id"] != original["id"]
+
+        varied = wait_done(client, client.post(f"/jobs/{original['id']}/rerun?new_seed=true").json()["id"])
+        assert varied["positive"] == original["positive"]
+        assert client.post("/jobs/nope/rerun").status_code == 404
+
+
+def test_jobs_cut_off_by_shutdown_are_marked_failed(tmp_path):
+    store = JobStore(tmp_path / "test.db")
+    with make_client(tmp_path) as (client, _):
+        stuck = wait_done(client, client.post("/jobs", json={"prompt": "1girl"}).json()["id"])
+    stuck = store.get(stuck["id"])
+    stuck.status, stuck.image_url = "generating", None
+    store.save(stuck)
+    store.close()
+
+    with make_client(tmp_path) as (client, _):
+        job = client.get(f"/jobs/{stuck.id}").json()
+        assert job["status"] == "failed"
+        assert "interrupted" in job["error"]
+        assert client.post(f"/jobs/{stuck.id}/rerun").status_code == 202

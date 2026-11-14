@@ -16,6 +16,7 @@ dist/
 
 # Generated / Models
 outputs/
+data/
 *.safetensors
 *.ckpt
 

@@ -9,6 +9,7 @@ LLM과 SDXL이 동시에 올라가지 않게 한다.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import pathlib
 import random
 import time
@@ -18,6 +19,7 @@ from typing import Callable, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .image import GenerationParams, ImageBackend
+from .store import JobStore
 from .tagging.ollama_tagger import NEGATIVE_PROMPT, TagResult
 
 Tagger = Callable[[str, "int | str"], TagResult]
@@ -42,6 +44,8 @@ class JobRequest(BaseModel):
 
 class Job(BaseModel):
     id: str
+    created_at: str
+    rerun_of: str | None = None
     status: Literal["queued", "tagging", "generating", "done", "failed"] = "queued"
     request: str | None = None
     tags: dict | None = None
@@ -60,9 +64,10 @@ class Job(BaseModel):
 
 
 class Pipeline:
-    def __init__(self, backend: ImageBackend, tagger: Tagger, output_dir: pathlib.Path):
+    def __init__(self, backend: ImageBackend, tagger: Tagger, output_dir: pathlib.Path, store: JobStore):
         self.backend = backend
-        self.jobs: dict[str, Job] = {}
+        self.store = store
+        store.fail_unfinished("interrupted: the server stopped before this job finished")
         self._tagger = tagger
         self._output_dir = output_dir
         self._lock = asyncio.Lock()
@@ -70,8 +75,30 @@ class Pipeline:
         self._tasks: set[asyncio.Task] = set()
 
     def submit(self, req: JobRequest) -> Job:
-        job = Job(
+        return self._enqueue(self._new_job(req))
+
+    def rerun(self, original: Job, new_seed: bool = False) -> Job:
+        """저장된 프롬프트로 다시 생성한다. LLM을 거치지 않으므로 같은 시드면 같은 그림이 나온다."""
+        if not original.positive:
+            raise ValueError("this job has no prompt to rerun (it failed before tagging finished)")
+        job = self._new_job(
+            JobRequest(
+                prompt=original.positive,
+                negative=original.negative,
+                seed=None if new_seed else original.seed,
+                width=original.width,
+                height=original.height,
+                steps=original.steps,
+                cfg=original.cfg,
+            )
+        )
+        job.request, job.tags, job.rerun_of = original.request, original.tags, original.id
+        return self._enqueue(job)
+
+    def _new_job(self, req: JobRequest) -> Job:
+        return Job(
             id=uuid.uuid4().hex[:12],
+            created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds"),
             request=req.request,
             positive=req.prompt,
             negative=req.negative or NEGATIVE_PROMPT,
@@ -82,7 +109,9 @@ class Pipeline:
             cfg=req.cfg,
             backend=self.backend.name,
         )
-        self.jobs[job.id] = job
+
+    def _enqueue(self, job: Job) -> Job:
+        self.store.save(job)
         task = asyncio.create_task(self._run(job))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -107,14 +136,16 @@ class Pipeline:
     async def _run(self, job: Job) -> None:
         async with self._lock:
             try:
-                if job.request:
+                if job.positive is None:
                     job.status = "tagging"
+                    self.store.save(job)
                     started = time.monotonic()
                     result = await self._tag(job.request)
                     job.tags, job.positive = result.tags, result.positive
                     job.tagging_seconds = round(time.monotonic() - started, 1)
 
                 job.status = "generating"
+                self.store.save(job)
                 started = time.monotonic()
                 self._image_model_loaded = True
                 image = await self.backend.generate(
@@ -137,3 +168,4 @@ class Pipeline:
             except Exception as exc:  # 작업 실패는 서버를 죽이지 않고 job 에 남긴다.
                 job.status = "failed"
                 job.error = f"{type(exc).__name__}: {exc}"
+            self.store.save(job)
