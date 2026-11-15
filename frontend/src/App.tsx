@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, isActive, type Job, type JobInput } from "./api";
+import { api, isActive, type Job, type JobInput, type Preset } from "./api";
 import { Composer } from "./Composer";
 import { Gallery } from "./Gallery";
 import { JobDetail } from "./JobDetail";
+import { PresetManager } from "./PresetManager";
 
 const PAGE_SIZE = 24;
 
@@ -13,6 +14,20 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [managing, setManaging] = useState(false);
+
+  const refreshPresets = useCallback(async () => {
+    try {
+      setPresets(await api.listPresets());
+    } catch {
+      // 기록 목록 쪽 배너가 연결 오류를 이미 보여 준다.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshPresets();
+  }, [refreshPresets]);
 
   const refresh = useCallback(async () => {
     try {
@@ -61,7 +76,7 @@ export default function App() {
 
       <main className="layout">
         <aside className="sidebar">
-          <Composer onSubmit={submit} />
+          <Composer presets={presets} onSubmit={submit} onManagePresets={() => setManaging(true)} />
         </aside>
 
         <section className="archive" aria-label="생성 기록">
@@ -94,6 +109,9 @@ export default function App() {
       </main>
 
       {selected && <JobDetail job={selected} onClose={() => setSelectedId(null)} onRerun={rerun} />}
+      {managing && (
+        <PresetManager presets={presets} onChanged={refreshPresets} onClose={() => setManaging(false)} />
+      )}
     </div>
   );
 }

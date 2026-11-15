@@ -1,4 +1,24 @@
 export type JobStatus = "queued" | "tagging" | "generating" | "done" | "failed";
+export type PresetType = "character" | "style";
+
+export interface PresetInput {
+  type: PresetType;
+  name: string;
+  positive: string[];
+  negative: string[];
+}
+
+export interface Preset extends PresetInput {
+  id: string;
+  lora: unknown[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Composed {
+  positive: string;
+  negative_tags: string[];
+}
 
 export interface Job {
   id: string;
@@ -7,6 +27,7 @@ export interface Job {
   status: JobStatus;
   request: string | null;
   tags: Record<string, string[]> | null;
+  presets: Partial<Record<PresetType, Preset>> | null;
   positive: string | null;
   negative: string;
   seed: number;
@@ -29,6 +50,8 @@ export interface JobPage {
 export interface JobInput {
   request?: string;
   prompt?: string;
+  character_preset_id?: string;
+  style_preset_id?: string;
   exclude_nsfw: boolean;
   seed?: number;
   width: number;
@@ -53,21 +76,42 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
       : (detail ?? res.statusText);
     throw new Error(res.status >= 500 ? `백엔드 오류 (${res.status}): ${text}` : String(text));
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
-const post = (body?: unknown): RequestInit => ({
-  method: "POST",
+const send = (method: string, body?: unknown): RequestInit => ({
+  method,
   headers: { "Content-Type": "application/json" },
   body: body === undefined ? undefined : JSON.stringify(body),
 });
+const post = (body?: unknown) => send("POST", body);
 
 export const api = {
   listJobs: (limit: number) => call<JobPage>(`/jobs?limit=${limit}`),
   createJob: (input: JobInput) => call<Job>("/jobs", post(input)),
   rerun: (id: string, newSeed: boolean) => call<Job>(`/jobs/${id}/rerun?new_seed=${newSeed}`, post()),
   imageUrl: (job: Job) => (job.image_url ? BASE + job.image_url : null),
+
+  listPresets: () => call<Preset[]>("/presets"),
+  createPreset: (input: PresetInput) => call<Preset>("/presets", post(input)),
+  updatePreset: (id: string, input: PresetInput) => call<Preset>(`/presets/${id}`, send("PUT", input)),
+  deletePreset: (id: string) => call<void>(`/presets/${id}`, send("DELETE")),
+  composePresets: (body: { character_preset_id?: string; style_preset_id?: string; prompt?: string }) =>
+    call<Composed>("/presets/compose", post(body)),
 };
+
+export const PRESET_TYPE_LABEL: Record<PresetType, string> = {
+  character: "캐릭터",
+  style: "스타일",
+};
+
+/** "1girl, silver hair" 같은 쉼표 구분 문자열을 태그 배열로 바꾼다. */
+export const splitTags = (text: string) =>
+  text
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
 
 export const isActive = (job: Job) =>
   job.status === "queued" || job.status === "tagging" || job.status === "generating";

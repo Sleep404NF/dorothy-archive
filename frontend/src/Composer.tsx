@@ -1,5 +1,5 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
-import type { JobInput } from "./api";
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
+import { api, type JobInput, type Preset, type PresetType } from "./api";
 
 const SHAPES = [
   { id: "portrait", label: "세로", width: 832, height: 1216 },
@@ -9,9 +9,18 @@ const SHAPES = [
 
 type Mode = "request" | "prompt";
 
-export function Composer({ onSubmit }: { onSubmit: (input: JobInput) => Promise<void> }) {
+interface Props {
+  presets: Preset[];
+  onSubmit: (input: JobInput) => Promise<void>;
+  onManagePresets: () => void;
+}
+
+export function Composer({ presets, onSubmit, onManagePresets }: Props) {
   const [mode, setMode] = useState<Mode>("request");
   const [text, setText] = useState("");
+  const [characterId, setCharacterId] = useState("");
+  const [styleId, setStyleId] = useState("");
+  const [preview, setPreview] = useState<string | null>(null);
   const [shape, setShape] = useState<(typeof SHAPES)[number]["id"]>("portrait");
   const [steps, setSteps] = useState(28);
   const [seed, setSeed] = useState("");
@@ -20,7 +29,34 @@ export function Composer({ onSubmit }: { onSubmit: (input: JobInput) => Promise<
   const [error, setError] = useState<string | null>(null);
 
   const seedValid = seed === "" || /^\d{1,10}$/.test(seed);
-  const canSubmit = text.trim() !== "" && seedValid && !busy;
+  const hasPreset = characterId !== "" || styleId !== "";
+  const canSubmit = (text.trim() !== "" || hasPreset) && seedValid && !busy;
+  const requestPending = mode === "request" && text.trim() !== "";
+
+  // 고른 프리셋이 지워지면 선택을 푼다.
+  useEffect(() => {
+    if (characterId && !presets.some((p) => p.id === characterId)) setCharacterId("");
+    if (styleId && !presets.some((p) => p.id === styleId)) setStyleId("");
+  }, [presets, characterId, styleId]);
+
+  // 프리셋을 고르면 합쳐질 프롬프트를 미리 보여 준다. 한국어 요청은 태그 변환 뒤에 합쳐지므로 제외.
+  useEffect(() => {
+    if (!hasPreset || requestPending) {
+      setPreview(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      api
+        .composePresets({
+          character_preset_id: characterId || undefined,
+          style_preset_id: styleId || undefined,
+          prompt: mode === "prompt" ? text : undefined,
+        })
+        .then((c) => setPreview(c.positive))
+        .catch(() => setPreview(null));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [hasPreset, requestPending, characterId, styleId, mode, text]);
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -29,7 +65,9 @@ export function Composer({ onSubmit }: { onSubmit: (input: JobInput) => Promise<
     setError(null);
     try {
       await onSubmit({
-        [mode]: text.trim(),
+        ...(text.trim() ? { [mode]: text.trim() } : {}),
+        character_preset_id: characterId || undefined,
+        style_preset_id: styleId || undefined,
         exclude_nsfw: excludeNsfw,
         seed: seed === "" ? undefined : Number(seed),
         width,
@@ -85,6 +123,26 @@ export function Composer({ onSubmit }: { onSubmit: (input: JobInput) => Promise<
           : "LLM을 거치지 않고 입력한 태그 그대로 그립니다."}
       </p>
 
+      <fieldset className="field presets">
+        <legend>
+          프리셋
+          <button type="button" className="link" onClick={onManagePresets}>
+            관리
+          </button>
+        </legend>
+        <PresetSelect type="character" presets={presets} value={characterId} onChange={setCharacterId} />
+        <PresetSelect type="style" presets={presets} value={styleId} onChange={setStyleId} />
+        {hasPreset && (
+          <p className="hint">
+            {requestPending
+              ? "요청을 태그로 바꾼 뒤 캐릭터 → 요청 → 스타일 순서로 합칩니다."
+              : preview
+                ? <span className="preview">{preview}</span>
+                : "캐릭터 → 입력 태그 → 스타일 순서로 합칩니다."}
+          </p>
+        )}
+      </fieldset>
+
       <fieldset className="field">
         <legend>비율</legend>
         <div className="segmented">
@@ -131,5 +189,33 @@ export function Composer({ onSubmit }: { onSubmit: (input: JobInput) => Promise<
       </button>
       <p className="hint center">⌘/Ctrl + Enter 로도 보낼 수 있습니다.</p>
     </form>
+  );
+}
+
+function PresetSelect({
+  type,
+  presets,
+  value,
+  onChange,
+}: {
+  type: PresetType;
+  presets: Preset[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const options = presets.filter((p) => p.type === type);
+  const label = type === "character" ? "캐릭터" : "스타일";
+  return (
+    <label className="preset-row">
+      <span>{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">없음</option>
+        {options.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

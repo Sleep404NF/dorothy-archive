@@ -63,6 +63,7 @@ full body, lake, night, moonlight, reflection
 | 기능 | 설명 |
 |---|---|
 | **한국어 → 태그 변환** | Ollama 로컬 LLM이 자연어 요청을 Danbooru 태그 프롬프트로 변환한다 |
+| **키워드 프리셋 조합** | 캐릭터·스타일 프리셋(JSON)을 `캐릭터 → 요청 태그 → 스타일` 순서로 결정적으로 병합한다. 중복 제거, 품질 태그 앞으로 정렬, 프리셋 제외 태그와 충돌하는 태그 제거 |
 | **태그 직접 입력** | 완성된 프롬프트를 넣으면 LLM 단계를 건너뛴다 |
 | **비동기 생성 작업** | 요청하면 바로 `202 Accepted`와 작업 ID를 돌려주고, 생성은 백그라운드에서 진행한다 |
 | **생성 기록 아카이브** | 요청·태그·시드·파라미터·소요 시간을 함께 저장하고 최신순으로 보여준다 |
@@ -120,6 +121,9 @@ flowchart LR
 | `POST` | `/jobs/{id}/rerun` | 같은 시드로 재생성 (`new_seed=true`면 변주) |
 | `GET` | `/images/{name}` | 생성된 이미지 |
 | `POST` | `/tags` | 생성 없이 태그 변환만 |
+| `GET` `POST` | `/presets` | 프리셋 목록(`type`으로 필터) / 생성 |
+| `GET` `PUT` `DELETE` | `/presets/{id}` | 프리셋 조회 / 수정 / 삭제 |
+| `POST` | `/presets/compose` | 생성 없이 프리셋 병합 결과만 미리 보기 |
 | `POST` | `/release` | 로드된 모델을 메모리에서 내리기 |
 
 <details>
@@ -198,7 +202,7 @@ cd backend && pytest
 - [x] 한국어 요청 → Danbooru 태그 변환
 - [x] 생성 기록 저장 + 시드 재생성
 - [x] React UI (요청 입력, 기록 갤러리, 상세 보기)
-- [ ] 캐릭터 / 스타일 키워드 프리셋(JSON) 조합
+- [x] 캐릭터 / 스타일 키워드 프리셋(JSON) 조합
 - [ ] 태그 사전으로 LLM 태그 변환 결과 검증
 - [ ] 작업 큐 분리 (Celery + Redis) + 실시간 진행률(SSE)
 - [ ] 저장소 전환 (PostgreSQL + MinIO)

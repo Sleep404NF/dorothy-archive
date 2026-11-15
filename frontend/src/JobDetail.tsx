@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, isActive, STATUS_LABEL, type Job } from "./api";
+import { api, isActive, PRESET_TYPE_LABEL, STATUS_LABEL, type Job, type PresetType } from "./api";
 import { caption } from "./Gallery";
 
 const TAG_GROUPS: [string, string][] = [
@@ -84,6 +84,18 @@ export function JobDetail({ job, onClose, onRerun }: Props) {
           </div>
 
           {job.request && <p className="request">{job.request}</p>}
+          {job.presets && Object.keys(job.presets).length > 0 && (
+            <div className="used-presets">
+              {(["character", "style"] as PresetType[]).map((type) => {
+                const preset = job.presets?.[type];
+                return preset ? (
+                  <span className="chip preset" key={type} title={preset.positive.join(", ")}>
+                    {PRESET_TYPE_LABEL[type]} · {preset.name}
+                  </span>
+                ) : null;
+              })}
+            </div>
+          )}
           {job.error && (
             <p className="form-error" role="alert">
               {job.error}
