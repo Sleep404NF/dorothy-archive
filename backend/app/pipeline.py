@@ -19,6 +19,7 @@ from typing import Callable, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .image import GenerationParams, ImageBackend
+from .presets import Preset, compose, merge_negative, split_tags
 from .store import JobStore
 from .tagging.ollama_tagger import NEGATIVE_PROMPT, NSFW_NEGATIVE_TAG, TagResult
 
@@ -28,6 +29,8 @@ Tagger = Callable[[str, "int | str"], TagResult]
 class JobRequest(BaseModel):
     request: str | None = Field(None, description="한국어 자연어 요청. LLM이 Danbooru 태그로 바꾼다.")
     prompt: str | None = Field(None, description="이미 완성된 태그 프롬프트. 주면 LLM을 건너뛴다.")
+    character_preset_id: str | None = Field(None, description="캐릭터 프리셋. 태그 맨 앞에 합친다.")
+    style_preset_id: str | None = Field(None, description="스타일 프리셋. 태그 맨 뒤에 합친다.")
     negative: str | None = None
     exclude_nsfw: bool = Field(True, description="True 면 제외 프롬프트 앞에 'nsfw' 를 붙인다.")
     seed: int | None = None
@@ -38,8 +41,10 @@ class JobRequest(BaseModel):
 
     @model_validator(mode="after")
     def _one_source(self):
-        if bool(self.request) == bool(self.prompt):
-            raise ValueError("give exactly one of 'request' or 'prompt'")
+        if self.request and self.prompt:
+            raise ValueError("give either 'request' or 'prompt', not both")
+        if not (self.request or self.prompt or self.character_preset_id or self.style_preset_id):
+            raise ValueError("give 'request', 'prompt' or at least one preset")
         return self
 
 
@@ -56,6 +61,8 @@ class Job(BaseModel):
     status: Literal["queued", "tagging", "generating", "done", "failed"] = "queued"
     request: str | None = None
     tags: dict | None = None
+    # 생성 당시 프리셋의 스냅샷. 나중에 프리셋을 고치거나 지워도 이 기록은 그대로다.
+    presets: dict[str, Preset] | None = None
     positive: str | None = None
     negative: str
     seed: int
@@ -81,8 +88,9 @@ class Pipeline:
         self._image_model_loaded = False
         self._tasks: set[asyncio.Task] = set()
 
-    def submit(self, req: JobRequest) -> Job:
-        return self._enqueue(self._new_job(req))
+    def submit(self, req: JobRequest, presets: dict[str, Preset] | None = None) -> Job:
+        """presets 는 {"character": Preset, "style": Preset} 중 쓰는 것만 담는다 (조회는 호출한 쪽이 한다)."""
+        return self._enqueue(self._new_job(req, presets or None))
 
     def rerun(self, original: Job, new_seed: bool = False) -> Job:
         """저장된 프롬프트로 다시 생성한다. LLM을 거치지 않으므로 같은 시드면 같은 그림이 나온다."""
@@ -101,10 +109,11 @@ class Pipeline:
             )
         )
         job.request, job.tags, job.rerun_of = original.request, original.tags, original.id
+        job.presets = original.presets  # 이미 합쳐진 프롬프트를 쓰므로 다시 합치지 않는다.
         return self._enqueue(job)
 
-    def _new_job(self, req: JobRequest) -> Job:
-        return Job(
+    def _new_job(self, req: JobRequest, presets: dict[str, Preset] | None = None) -> Job:
+        job = Job(
             id=uuid.uuid4().hex[:12],
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds"),
             request=req.request,
@@ -117,6 +126,13 @@ class Pipeline:
             cfg=req.cfg,
             backend=self.backend.name,
         )
+        if presets:
+            job.presets = presets
+            composed = compose(presets.get("character"), presets.get("style"), split_tags(req.prompt))
+            job.negative = merge_negative(job.negative, composed.negative_tags)
+            if not req.request:  # 요청이 있으면 태그 변환이 끝난 뒤 합친다.
+                job.positive = composed.positive
+        return job
 
     def _enqueue(self, job: Job) -> Job:
         self.store.save(job)
@@ -150,6 +166,10 @@ class Pipeline:
                     started = time.monotonic()
                     result = await self._tag(job.request)
                     job.tags, job.positive = result.tags, result.positive
+                    if job.presets:
+                        job.positive = compose(
+                            job.presets.get("character"), job.presets.get("style"), split_tags(result.positive)
+                        ).positive
                     job.tagging_seconds = round(time.monotonic() - started, 1)
 
                 job.status = "generating"

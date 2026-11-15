@@ -1,0 +1,20 @@
+[
+  {
+    "id": "base-quality",
+    "type": "style",
+    "name": "기본 품질",
+    "positive": ["masterpiece", "best quality", "newest", "absurdres", "highres"]
+  },
+  {
+    "id": "night-archive",
+    "type": "style",
+    "name": "밤하늘 아카이브",
+    "positive": ["masterpiece", "best quality", "newest", "night", "night sky", "starry sky", "moonlight", "light particles", "blue theme"]
+  },
+  {
+    "id": "watercolor",
+    "type": "style",
+    "name": "수채화",
+    "positive": ["masterpiece", "best quality", "watercolor (medium)", "traditional media", "pastel colors", "soft lighting"]
+  }
+]

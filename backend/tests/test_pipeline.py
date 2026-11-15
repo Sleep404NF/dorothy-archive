@@ -43,7 +43,7 @@ def make_client(tmp_path, events=None, **backend_kwargs):
         events.append(("tag", text, keep_alive))
         return TagResult(request=text, tags={"subject": ["1girl", "solo"]})
 
-    settings = Settings(output_dir=tmp_path, db_path=tmp_path / "test.db")
+    settings = Settings(output_dir=tmp_path, db_path=tmp_path / "test.db", preset_seed_dir=None)
     pipeline = Pipeline(FakeBackend(events, **backend_kwargs), tagger, tmp_path, JobStore(settings.db_path))
     with TestClient(create_app(settings, pipeline)) as client:
         yield client, events

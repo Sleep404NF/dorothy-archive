@@ -22,6 +22,12 @@ class Settings:
     db_path: pathlib.Path = field(
         default_factory=lambda: pathlib.Path(os.getenv("DOROTHY_DB", REPO_ROOT / "data" / "dorothy.db"))
     )
+    # 프리셋 저장소가 비어 있을 때 넣을 기본 프리셋 폴더. 없으면 건너뛴다.
+    preset_seed_dir: pathlib.Path | None = field(
+        default_factory=lambda: pathlib.Path(
+            os.getenv("DOROTHY_PRESET_SEED_DIR", REPO_ROOT / "prompts" / "presets")
+        )
+    )
     output_dir: pathlib.Path = field(
         default_factory=lambda: pathlib.Path(os.getenv("DOROTHY_OUTPUT_DIR", REPO_ROOT / "outputs"))
     )

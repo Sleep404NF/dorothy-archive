@@ -1,0 +1,16 @@
+[
+  {
+    "id": "dorothy",
+    "type": "character",
+    "name": "도로시 (마스코트, 가제)",
+    "positive": ["1girl", "solo", "brown hair", "long hair", "braid", "blue eyes", "star hair ornament", "navy dress", "white collar", "capelet", "holding book"],
+    "negative": ["short hair"]
+  },
+  {
+    "id": "silver-girl",
+    "type": "character",
+    "name": "은발 소녀",
+    "positive": ["1girl", "solo", "silver hair", "long hair", "blue eyes", "(hair ribbon:1.1)"],
+    "negative": ["short hair"]
+  }
+]
