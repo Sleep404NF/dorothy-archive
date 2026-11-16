@@ -28,6 +28,17 @@ class Settings:
             os.getenv("DOROTHY_PRESET_SEED_DIR", REPO_ROOT / "prompts" / "presets")
         )
     )
+    # 태그 검증용 파일. 없으면 그 단계를 건너뛴다. DOROTHY_TAG_VALIDATION=0 이면 전부 끈다.
+    tag_validation: bool = field(default_factory=lambda: os.getenv("DOROTHY_TAG_VALIDATION", "1") != "0")
+    tag_dictionary_path: pathlib.Path = field(
+        default_factory=lambda: pathlib.Path(
+            os.getenv("DOROTHY_TAG_DICTIONARY", REPO_ROOT / "prompts" / "tags" / "danbooru_tags.csv.gz")
+        )
+    )
+    tag_extra_path: pathlib.Path = REPO_ROOT / "prompts" / "tags" / "extra_tags.txt"
+    glossary_path: pathlib.Path = field(
+        default_factory=lambda: pathlib.Path(os.getenv("DOROTHY_GLOSSARY", REPO_ROOT / "prompts" / "glossary.ko.json"))
+    )
     output_dir: pathlib.Path = field(
         default_factory=lambda: pathlib.Path(os.getenv("DOROTHY_OUTPUT_DIR", REPO_ROOT / "outputs"))
     )

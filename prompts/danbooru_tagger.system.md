@@ -26,6 +26,7 @@ More rules:
 - Scenery without people: subject is ["no humans", "scenery"] and appearance, clothing, pose_expression are empty. Never add "1girl" to it.
 - Animals are counted in subject as "cat", "dog" (not "1cat"). "solo" is only for exactly one person and nothing else.
 - Every tag belongs in exactly one field. Clothing never goes in appearance.
+- If the message lists "Required tags" for some terms, use exactly those tags for those terms (e.g. "여우 귀" is "fox ears", never "elf ears" or "pointy ears").
 
 Examples
 Request: 비 오는 밤 도시에서 우산을 쓴 검은 단발 소녀, 쓸쓸한 분위기

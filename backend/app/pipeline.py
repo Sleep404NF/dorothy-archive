@@ -22,6 +22,7 @@ from .image import GenerationParams, ImageBackend
 from .presets import Preset, compose, merge_negative, split_tags
 from .store import JobStore
 from .tagging.ollama_tagger import NEGATIVE_PROMPT, NSFW_NEGATIVE_TAG, TagResult
+from .tagging.refine import TagRefiner
 
 Tagger = Callable[[str, "int | str"], TagResult]
 
@@ -63,6 +64,8 @@ class Job(BaseModel):
     tags: dict | None = None
     # 생성 당시 프리셋의 스냅샷. 나중에 프리셋을 고치거나 지워도 이 기록은 그대로다.
     presets: dict[str, Preset] | None = None
+    # 태그 검증 보고서: 용어집 적용, 별칭 정리, 사전에 없어 뺀 태그.
+    tag_report: dict | None = None
     positive: str | None = None
     negative: str
     seed: int
@@ -78,8 +81,16 @@ class Job(BaseModel):
 
 
 class Pipeline:
-    def __init__(self, backend: ImageBackend, tagger: Tagger, output_dir: pathlib.Path, store: JobStore):
+    def __init__(
+        self,
+        backend: ImageBackend,
+        tagger: Tagger,
+        output_dir: pathlib.Path,
+        store: JobStore,
+        refiner: TagRefiner | None = None,
+    ):
         self.backend = backend
+        self.refiner = refiner
         self.store = store
         store.fail_unfinished("interrupted: the server stopped before this job finished")
         self._tagger = tagger
@@ -109,6 +120,7 @@ class Pipeline:
             )
         )
         job.request, job.tags, job.rerun_of = original.request, original.tags, original.id
+        job.tag_report = original.tag_report
         job.presets = original.presets  # 이미 합쳐진 프롬프트를 쓰므로 다시 합치지 않는다.
         return self._enqueue(job)
 
@@ -155,7 +167,12 @@ class Pipeline:
         if local and self._image_model_loaded:
             await self.backend.release()
             self._image_model_loaded = False
-        return await asyncio.to_thread(self._tagger, request, 0 if local else "5m")
+        if not self.refiner:
+            return await asyncio.to_thread(self._tagger, request, 0 if local else "5m")
+        # 용어집 힌트를 붙여 LLM에 보내고, 결과를 사전·용어집으로 다듬는다.
+        raw = await asyncio.to_thread(self._tagger, request + self.refiner.hint(request), 0 if local else "5m")
+        tags, report = self.refiner.refine(request, raw.tags)
+        return TagResult(request=request, tags=tags, report=report)
 
     async def _run(self, job: Job) -> None:
         async with self._lock:
@@ -165,7 +182,7 @@ class Pipeline:
                     self.store.save(job)
                     started = time.monotonic()
                     result = await self._tag(job.request)
-                    job.tags, job.positive = result.tags, result.positive
+                    job.tags, job.positive, job.tag_report = result.tags, result.positive, result.report
                     if job.presets:
                         job.positive = compose(
                             job.presets.get("character"), job.presets.get("style"), split_tags(result.positive)

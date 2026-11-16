@@ -36,15 +36,17 @@ class FakeBackend(ImageBackend):
 
 
 @contextlib.contextmanager
-def make_client(tmp_path, events=None, **backend_kwargs):
+def make_client(tmp_path, events=None, refiner=None, tags=None, **backend_kwargs):
     events = [] if events is None else events
 
     def tagger(text, keep_alive):
         events.append(("tag", text, keep_alive))
-        return TagResult(request=text, tags={"subject": ["1girl", "solo"]})
+        return TagResult(request=text, tags=tags or {"subject": ["1girl", "solo"]})
 
     settings = Settings(output_dir=tmp_path, db_path=tmp_path / "test.db", preset_seed_dir=None)
-    pipeline = Pipeline(FakeBackend(events, **backend_kwargs), tagger, tmp_path, JobStore(settings.db_path))
+    pipeline = Pipeline(
+        FakeBackend(events, **backend_kwargs), tagger, tmp_path, JobStore(settings.db_path), refiner=refiner
+    )
     with TestClient(create_app(settings, pipeline)) as client:
         yield client, events
 

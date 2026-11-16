@@ -37,6 +37,8 @@ SCHEMA = {
 class TagResult:
     request: str
     tags: dict = field(default_factory=dict)
+    # 사전·용어집 검증 보고서 (TagRefiner). 검증하지 않았거나 바뀐 게 없으면 None.
+    report: dict | None = None
 
     @property
     def positive(self) -> str:

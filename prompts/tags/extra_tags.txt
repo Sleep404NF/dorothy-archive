@@ -1,0 +1,3 @@
+# Danbooru 사전에는 없지만 모델(NoobAI/Illustrious)이 알아듣는 태그.
+# 검증에서 빠지지 않게 여기에 한 줄에 하나씩 적는다. 공백/밑줄 둘 다 된다.
+silver hair

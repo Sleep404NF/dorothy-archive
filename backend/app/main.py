@@ -13,6 +13,7 @@ from .pipeline import Job, JobRequest, Pipeline
 from .presets import Composed, Preset, PresetConflict, PresetIn, PresetStore, PresetType, compose, split_tags
 from .store import JobStore
 from .tagging.ollama_tagger import to_tags
+from .tagging.refine import load_refiner
 
 
 class TagRequest(BaseModel):
@@ -46,6 +47,9 @@ def create_app(
             ),
             output_dir=settings.output_dir,
             store=JobStore(settings.db_path),
+            refiner=load_refiner(settings.tag_dictionary_path, settings.tag_extra_path, settings.glossary_path)
+            if settings.tag_validation
+            else None,
         )
         app.state.presets = presets or PresetStore(settings.db_path)
         app.state.presets.seed(settings.preset_seed_dir)
@@ -118,7 +122,7 @@ def create_app(
     @app.post("/tags")
     async def tags(req: TagRequest):
         result = await app.state.pipeline.convert(req.request)
-        return {"tags": result.tags, "positive": result.positive, "negative": result.negative}
+        return {"tags": result.tags, "positive": result.positive, "negative": result.negative, "report": result.report}
 
     @app.get("/presets")
     async def list_presets(type: PresetType | None = None) -> list[Preset]:
