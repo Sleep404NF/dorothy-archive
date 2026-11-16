@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, isActive, PRESET_TYPE_LABEL, STATUS_LABEL, type Job, type PresetType } from "./api";
+import { api, isActive, PRESET_TYPE_LABEL, STATUS_LABEL, type Job, type PresetType, type TagReport } from "./api";
 import { caption } from "./Gallery";
 
 const TAG_GROUPS: [string, string][] = [
@@ -119,6 +119,8 @@ export function JobDetail({ job, onClose, onRerun }: Props) {
             </dl>
           )}
 
+          {job.tag_report && <TagReportView report={job.tag_report} />}
+
           {job.positive && (
             <div className="prompt">
               <div className="prompt-head">
@@ -185,5 +187,68 @@ export function JobDetail({ job, onClose, onRerun }: Props) {
         </div>
       </div>
     </dialog>
+  );
+}
+
+function TagReportView({ report }: { report: TagReport }) {
+  return (
+    <details className="tag-report">
+      <summary>
+        태그 검증
+        <span className="muted">
+          {[
+            report.glossary?.length && `용어집 ${report.glossary.length}`,
+            report.aliased?.length && `정리 ${report.aliased.length}`,
+            report.dropped?.length && `제외 ${report.dropped.length}`,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </span>
+      </summary>
+
+      {report.glossary?.map((g) => (
+        <div className="report-row" key={g.term}>
+          <span className="report-label">“{g.term}”</span>
+          <span>
+            {g.added.map((t) => (
+              <span className="chip added" key={`+${t}`}>
+                + {t}
+              </span>
+            ))}
+            {g.removed.map((t) => (
+              <span className="chip removed" key={`-${t}`}>
+                {t}
+              </span>
+            ))}
+          </span>
+        </div>
+      ))}
+
+      {report.aliased && report.aliased.length > 0 && (
+        <div className="report-row">
+          <span className="report-label">표기 정리</span>
+          <span>
+            {report.aliased.map((a) => (
+              <span className="chip" key={a.from}>
+                {a.from} → {a.to}
+              </span>
+            ))}
+          </span>
+        </div>
+      )}
+
+      {report.dropped && report.dropped.length > 0 && (
+        <div className="report-row">
+          <span className="report-label">사전에 없어 뺌</span>
+          <span>
+            {report.dropped.map((t) => (
+              <span className="chip removed" key={t}>
+                {t}
+              </span>
+            ))}
+          </span>
+        </div>
+      )}
+    </details>
   );
 }

@@ -40,8 +40,8 @@ white dress, sitting, looking at moon,
 full body, lake, night, moonlight, reflection
 ```
 
-> ⚠️ "여우 귀"가 `elf ears`로 바뀐 것처럼 태그 변환이 아직 틀릴 때가 있다.<br>
-> 태그 사전 기반 검증으로 개선할 예정이다.
+> 처음에는 "여우 귀"가 `elf ears`로 잘못 변환됐다.<br>
+> 지금은 한국어 용어집 + 태그 사전 검증으로 `fox ears`로 바로잡는다. (아래 *태그 검증* 참고)
 
 **③ SDXL로 생성** · 90.6s
 `832×1216` · `28 steps` · `CFG 5.5` · `seed 3361504414`
@@ -64,6 +64,7 @@ full body, lake, night, moonlight, reflection
 |---|---|
 | **한국어 → 태그 변환** | Ollama 로컬 LLM이 자연어 요청을 Danbooru 태그 프롬프트로 변환한다 |
 | **키워드 프리셋 조합** | 캐릭터·스타일 프리셋(JSON)을 `캐릭터 → 요청 태그 → 스타일` 순서로 결정적으로 병합한다. 중복 제거, 품질 태그 앞으로 정렬, 프리셋 제외 태그와 충돌하는 태그 제거 |
+| **태그 검증** | Danbooru 태그 사전(약 5.7만 개)으로 별칭을 대표 태그로 정리하고 없는 태그는 뺀다. 한국어 용어집으로 LLM에 힌트를 주고 정답 태그를 넣는다. 바뀐 내용은 기록에 보고서로 남긴다 |
 | **태그 직접 입력** | 완성된 프롬프트를 넣으면 LLM 단계를 건너뛴다 |
 | **비동기 생성 작업** | 요청하면 바로 `202 Accepted`와 작업 ID를 돌려주고, 생성은 백그라운드에서 진행한다 |
 | **생성 기록 아카이브** | 요청·태그·시드·파라미터·소요 시간을 함께 저장하고 최신순으로 보여준다 |
@@ -105,7 +106,13 @@ flowchart LR
 **3. 재현 가능한 기록**
 기록에는 프리셋 참조가 아니라 **생성 당시의 최종 프롬프트와 파라미터 전체**를 저장한다. 그래서 나중에도 같은 시드로 같은 그림을 다시 만들 수 있다.
 
-**4. 중단된 작업 정리**
+**4. LLM 태그 검증 (사전 + 용어집)**
+작은 LLM은 없는 태그를 지어내거나(`drinking coffee`), 있는 태그지만 뜻이 다른 것을 고른다(`여우 귀` → `elf ears`). 앞의 것은 태그 사전으로, 뒤의 것은 한국어 용어집으로 잡는다.
+- 사전: 별칭은 대표 태그로 바꾸고(`maid outfit` → `maid`), 사전에 없는 태그는 빼고 기록한다
+- 용어집: 요청에 `여우 귀`가 있으면 LLM에 `fox ears`를 힌트로 주고, 결과에 반드시 넣고, `pointy ears`처럼 틀린 태그는 뺀다
+- 무엇이 바뀌었는지는 작업 기록의 `tag_report`에 남아 상세 보기에서 확인할 수 있다
+
+**5. 중단된 작업 정리**
 서버가 생성 도중에 꺼지면, 다시 켤 때 끝나지 않은 작업을 `failed`로 정리해서 기록이 `generating` 상태로 남지 않게 한다.
 
 ---
@@ -192,6 +199,9 @@ cd backend && pytest
 | `DOROTHY_OLLAMA_MODEL` | `gemma3:4b` | 태그 변환 모델 |
 | `DOROTHY_DB` | `data/dorothy.db` | 기록 저장 위치 |
 | `DOROTHY_OUTPUT_DIR` | `outputs` | 이미지 저장 위치 |
+| `DOROTHY_TAG_VALIDATION` | `1` | `0`이면 태그 검증을 끈다 |
+| `DOROTHY_TAG_DICTIONARY` | `prompts/tags/danbooru_tags.csv.gz` | 태그 사전 |
+| `DOROTHY_GLOSSARY` | `prompts/glossary.ko.json` | 한국어 용어집 |
 | `DOROTHY_API` | `http://127.0.0.1:8000` | 프론트 개발 서버의 API 프록시 대상 |
 
 ---
@@ -203,7 +213,7 @@ cd backend && pytest
 - [x] 생성 기록 저장 + 시드 재생성
 - [x] React UI (요청 입력, 기록 갤러리, 상세 보기)
 - [x] 캐릭터 / 스타일 키워드 프리셋(JSON) 조합
-- [ ] 태그 사전으로 LLM 태그 변환 결과 검증
+- [x] 태그 사전 + 한국어 용어집으로 LLM 태그 변환 결과 검증
 - [ ] 작업 큐 분리 (Celery + Redis) + 실시간 진행률(SSE)
 - [ ] 저장소 전환 (PostgreSQL + MinIO)
 - [ ] 로그인 (JWT)
@@ -223,6 +233,12 @@ cd backend && pytest
 <p align="center">
   <img src="docs/images/sunset-sea.jpg" width="74%">
 </p>
+
+---
+
+## 📚 데이터 출처
+
+- 태그 사전: [DominikDoom/a1111-sd-webui-tagcomplete](https://github.com/DominikDoom/a1111-sd-webui-tagcomplete)의 `danbooru.csv` (MIT License)를 `backend/scripts/build_tag_dictionary.py`로 줄여서 사용 (작가 태그 제외, 사용 횟수 50회 이상)
 
 ---
 

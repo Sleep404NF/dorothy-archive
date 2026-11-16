@@ -15,6 +15,12 @@ export interface Preset extends PresetInput {
   updated_at: string;
 }
 
+export interface TagReport {
+  glossary?: { term: string; added: string[]; removed: string[] }[];
+  aliased?: { from: string; to: string }[];
+  dropped?: string[];
+}
+
 export interface Composed {
   positive: string;
   negative_tags: string[];
@@ -28,6 +34,7 @@ export interface Job {
   request: string | null;
   tags: Record<string, string[]> | null;
   presets: Partial<Record<PresetType, Preset>> | null;
+  tag_report: TagReport | null;
   positive: string | null;
   negative: string;
   seed: number;
