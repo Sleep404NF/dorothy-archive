@@ -26,3 +26,6 @@ data/
 
 # Claude Code
 CLAUDE.md
+
+# Local run logs
+logs/
