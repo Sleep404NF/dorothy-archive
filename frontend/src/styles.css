@@ -813,3 +813,52 @@ button.ghost.danger {
   color: var(--muted);
   text-decoration: line-through;
 }
+
+/* 넓은 화면: 입력 폼과 기록이 각자 스크롤된다.
+   한쪽이 끝에 닿아도 스크롤이 다른 쪽이나 페이지 전체로 넘어가지 않는다(overscroll-behavior). */
+@media (min-width: 861px) {
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    padding-bottom: 0;
+  }
+
+  .masthead {
+    flex: none;
+  }
+
+  .layout {
+    flex: 1;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  .sidebar,
+  .archive {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: 24px;
+  }
+
+  .sidebar {
+    position: static;
+    padding-right: 6px;
+  }
+
+  /* 카드가 hover 때 2px 떠오르므로 위가 잘리지 않게 여유를 둔다. */
+  .archive {
+    padding-top: 4px;
+    padding-right: 6px;
+  }
+}
+
+/* 대화상자 안의 스크롤도 끝에서 뒤쪽으로 넘어가지 않게 한다. */
+.detail-info,
+.detail-body,
+.manager-list,
+.manager-edit {
+  overscroll-behavior: contain;
+}
