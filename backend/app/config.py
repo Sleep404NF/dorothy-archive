@@ -39,6 +39,9 @@ class Settings:
     glossary_path: pathlib.Path = field(
         default_factory=lambda: pathlib.Path(os.getenv("DOROTHY_GLOSSARY", REPO_ROOT / "prompts" / "glossary.ko.json"))
     )
+    # 생성 이미지 저장 형식. webp 가 기본이고, 원본 PNG 그대로 두려면 png.
+    image_format: str = field(default_factory=lambda: os.getenv("DOROTHY_IMAGE_FORMAT", "webp"))
+    webp_quality: int = field(default_factory=lambda: int(os.getenv("DOROTHY_WEBP_QUALITY", "90")))
     output_dir: pathlib.Path = field(
         default_factory=lambda: pathlib.Path(os.getenv("DOROTHY_OUTPUT_DIR", REPO_ROOT / "outputs"))
     )

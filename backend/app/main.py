@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from .config import Settings
 from .image import create_backend
+from .image.encode import MEDIA_TYPES
 from .pipeline import Job, JobRequest, Pipeline
 from .presets import Composed, Preset, PresetConflict, PresetIn, PresetStore, PresetType, compose, split_tags
 from .store import JobStore
@@ -47,6 +48,8 @@ def create_app(
             ),
             output_dir=settings.output_dir,
             store=JobStore(settings.db_path),
+            image_format="png" if settings.image_format == "png" else "webp",
+            webp_quality=settings.webp_quality,
             refiner=load_refiner(settings.tag_dictionary_path, settings.tag_extra_path, settings.glossary_path)
             if settings.tag_validation
             else None,
@@ -115,9 +118,9 @@ def create_app(
     @app.get("/images/{name}")
     async def get_image(name: str):
         path = settings.output_dir / name
-        if not re.fullmatch(r"[0-9a-f]{12}\.png", name) or not path.is_file():
+        if not re.fullmatch(r"[0-9a-f]{12}\.(png|webp)", name) or not path.is_file():
             raise HTTPException(404, "image not found")
-        return FileResponse(path, media_type="image/png")
+        return FileResponse(path, media_type=MEDIA_TYPES[path.suffix[1:]])
 
     @app.post("/tags")
     async def tags(req: TagRequest):

@@ -19,6 +19,7 @@ from typing import Callable, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .image import GenerationParams, ImageBackend
+from .image.encode import ImageFormat, encode
 from .presets import Preset, compose, merge_negative, split_tags
 from .store import JobStore
 from .tagging.ollama_tagger import NEGATIVE_PROMPT, NSFW_NEGATIVE_TAG, TagResult
@@ -88,8 +89,12 @@ class Pipeline:
         output_dir: pathlib.Path,
         store: JobStore,
         refiner: TagRefiner | None = None,
+        image_format: ImageFormat = "png",
+        webp_quality: int = 90,
     ):
         self.backend = backend
+        self._image_format = image_format
+        self._webp_quality = webp_quality
         self.refiner = refiner
         self.store = store
         store.fail_unfinished("interrupted: the server stopped before this job finished")
@@ -206,9 +211,10 @@ class Pipeline:
                 )
                 job.generation_seconds = round(time.monotonic() - started, 1)
 
+                data, ext = encode(image.data, self._image_format, self._webp_quality)
                 self._output_dir.mkdir(parents=True, exist_ok=True)
-                (self._output_dir / f"{job.id}.png").write_bytes(image.data)
-                job.image_url = f"/images/{job.id}.png"
+                (self._output_dir / f"{job.id}.{ext}").write_bytes(data)
+                job.image_url = f"/images/{job.id}.{ext}"
                 job.status = "done"
             except Exception as exc:  # 작업 실패는 서버를 죽이지 않고 job 에 남긴다.
                 job.status = "failed"

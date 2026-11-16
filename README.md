@@ -69,6 +69,7 @@ full body, lake, night, moonlight, reflection
 | **비동기 생성 작업** | 요청하면 바로 `202 Accepted`와 작업 ID를 돌려주고, 생성은 백그라운드에서 진행한다 |
 | **생성 기록 아카이브** | 요청·태그·시드·파라미터·소요 시간을 함께 저장하고 최신순으로 보여준다 |
 | **시드 재생성** | 저장된 프롬프트로 같은 시드 재생성, 또는 시드만 바꾼 변주 |
+| **WebP 저장** | ComfyUI가 돌려준 PNG를 WebP(품질 90)로 바꿔 저장한다. 실제 생성 기록 30장 기준 33.3MB → 2.9MB |
 | **NSFW 제외 옵션** | 요청마다 제외 프롬프트에 `nsfw` 태그를 붙일지 선택 |
 | **React 웹 UI** | 요청 입력, 기록 갤러리, 상세 보기(분류별 태그, 프롬프트 복사, 재생성) |
 
@@ -197,6 +198,8 @@ cd backend && pytest
 | `DOROTHY_WORKFLOW` | `workflows/txt2img_sdxl.api.json` | ComfyUI 워크플로 |
 | `DOROTHY_OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama 주소 |
 | `DOROTHY_OLLAMA_MODEL` | `gemma3:4b` | 태그 변환 모델 |
+| `DOROTHY_IMAGE_FORMAT` | `webp` | 생성 이미지 저장 형식 (`webp` 또는 `png`) |
+| `DOROTHY_WEBP_QUALITY` | `90` | WebP 품질 |
 | `DOROTHY_DB` | `data/dorothy.db` | 기록 저장 위치 |
 | `DOROTHY_OUTPUT_DIR` | `outputs` | 이미지 저장 위치 |
 | `DOROTHY_TAG_VALIDATION` | `1` | `0`이면 태그 검증을 끈다 |
