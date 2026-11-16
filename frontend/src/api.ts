@@ -120,6 +120,31 @@ export const splitTags = (text: string) =>
     .map((t) => t.trim())
     .filter(Boolean);
 
+export interface Progress {
+  step: number;
+  total: number;
+}
+
+/**
+ * 서버가 보내는 작업 이벤트(SSE)를 구독한다. 끊기면 브라우저가 알아서 다시 붙는다.
+ * 돌려주는 함수를 부르면 구독을 끝낸다.
+ */
+export function subscribeEvents(handlers: {
+  onJob: (job: Job) => void;
+  onProgress: (id: string, progress: Progress) => void;
+  onConnection: (open: boolean) => void;
+}): () => void {
+  const source = new EventSource(`${BASE}/events`);
+  source.onopen = () => handlers.onConnection(true);
+  source.onerror = () => handlers.onConnection(false);
+  source.addEventListener("job", (e) => handlers.onJob(JSON.parse((e as MessageEvent).data).job));
+  source.addEventListener("progress", (e) => {
+    const { id, step, total } = JSON.parse((e as MessageEvent).data);
+    handlers.onProgress(id, { step, total });
+  });
+  return () => source.close();
+}
+
 export const isActive = (job: Job) =>
   job.status === "queued" || job.status === "tagging" || job.status === "generating";
 
