@@ -32,7 +32,7 @@ def png_bytes(size=(64, 96)):
 class PngBackend(ImageBackend):
     name = "png"
 
-    async def generate(self, params):
+    async def generate(self, params, on_progress=None):
         return GeneratedImage(data=png_bytes())
 
     async def health(self):

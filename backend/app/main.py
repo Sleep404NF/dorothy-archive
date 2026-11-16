@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+import json
 import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Response
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .config import Settings
-from .image import create_backend
+from .events import RedisBus
+from .factory import build_pipeline
 from .image.encode import MEDIA_TYPES
 from .pipeline import Job, JobRequest, Pipeline
 from .presets import Composed, Preset, PresetConflict, PresetIn, PresetStore, PresetType, compose, split_tags
+from .queue import CeleryQueue, QueueUnavailable
 from .store import JobStore
-from .tagging.ollama_tagger import to_tags
-from .tagging.refine import load_refiner
+
+# SSE 연결이 프록시나 브라우저에서 끊기지 않도록 이 간격마다 빈 주석을 보낸다.
+SSE_PING_SECONDS = 15.0
 
 
 class TagRequest(BaseModel):
@@ -41,24 +45,25 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        app.state.pipeline = pipeline or Pipeline(
-            backend=create_backend(settings),
-            tagger=lambda text, keep_alive: to_tags(
-                text, model=settings.ollama_model, host=settings.ollama_host, keep_alive=keep_alive
-            ),
-            output_dir=settings.output_dir,
-            store=JobStore(settings.db_path),
-            image_format="png" if settings.image_format == "png" else "webp",
-            webp_quality=settings.webp_quality,
-            refiner=load_refiner(settings.tag_dictionary_path, settings.tag_extra_path, settings.glossary_path)
-            if settings.tag_validation
-            else None,
-        )
+        if pipeline is not None:
+            app.state.pipeline = pipeline
+        elif settings.queue == "celery":
+            # 실행은 워커가 한다. API 는 작업을 넣고, 워커가 Redis 로 보내는 이벤트를 SSE 로 전달한다.
+            from .worker import celery_app
+
+            app.state.pipeline = build_pipeline(
+                settings, queue=CeleryQueue(celery_app), events=RedisBus(settings.redis_url), recover="none"
+            )
+        else:
+            app.state.pipeline = build_pipeline(settings)
         app.state.presets = presets or PresetStore(settings.db_path)
         app.state.presets.seed(settings.preset_seed_dir)
         yield
-        await app.state.pipeline.backend.close()
-        app.state.pipeline.store.close()
+        p: Pipeline = app.state.pipeline
+        await p.backend.close()
+        await p.queue.close()
+        await p.events.close()
+        p.store.close()
         app.state.presets.close()
 
     app = FastAPI(title="DOROTHY", lifespan=lifespan)
@@ -66,7 +71,7 @@ def create_app(
     @app.get("/health")
     async def health():
         p: Pipeline = app.state.pipeline
-        return {"image_backend": p.backend.name, "image_backend_ok": await p.backend.health()}
+        return {"image_backend": p.backend.name, "image_backend_ok": await p.backend.health(), "queue": p.queue.name}
 
     def resolve_presets(character_id: str | None, style_id: str | None) -> dict[str, Preset]:
         """프리셋 id 를 실제 프리셋으로 바꾼다. 없으면 404, 종류가 다르면 422."""
@@ -85,7 +90,10 @@ def create_app(
     @app.post("/jobs", status_code=202)
     async def create_job(req: JobRequest) -> Job:
         presets = resolve_presets(req.character_preset_id, req.style_preset_id)
-        return app.state.pipeline.submit(req, presets)
+        try:
+            return await app.state.pipeline.submit(req, presets)
+        except QueueUnavailable as exc:
+            raise HTTPException(503, str(exc)) from None
 
     @app.get("/jobs")
     async def list_jobs(
@@ -111,9 +119,33 @@ def create_app(
     async def rerun_job(job_id: str, new_seed: bool = False) -> Job:
         """저장된 프롬프트로 다시 생성한다. new_seed=true 면 시드만 바꾼 변주."""
         try:
-            return app.state.pipeline.rerun(find_job(job_id), new_seed=new_seed)
+            return await app.state.pipeline.rerun(find_job(job_id), new_seed=new_seed)
+        except QueueUnavailable as exc:
+            raise HTTPException(503, str(exc)) from None
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from None
+
+    @app.get("/events")
+    async def events(request: Request) -> StreamingResponse:
+        """작업 상태 변화와 생성 진행률을 Server-Sent Events 로 흘려보낸다.
+
+        event: job       data: {"type": "job", "job": {...}}
+        event: progress  data: {"type": "progress", "id": "...", "step": 12, "total": 28}
+        """
+        bus = app.state.pipeline.events
+
+        async def stream():
+            yield ": connected\n\n"
+            async with bus.subscribe() as sub:
+                while not await request.is_disconnected():
+                    event = await sub.get(timeout=SSE_PING_SECONDS)
+                    if event is None:
+                        yield ": ping\n\n"
+                        continue
+                    yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+        headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+        return StreamingResponse(stream(), media_type="text/event-stream", headers=headers)
 
     @app.get("/images/{name}")
     async def get_image(name: str):

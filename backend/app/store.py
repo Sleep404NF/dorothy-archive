@@ -57,10 +57,10 @@ class JobStore:
         where, args = ("WHERE status = ?", [status]) if status else ("", [])
         return self._db.execute(f"SELECT COUNT(*) FROM jobs {where}", args).fetchone()[0]
 
-    def fail_unfinished(self, reason: str) -> int:
+    def fail_unfinished(self, reason: str, statuses: tuple[str, ...] = UNFINISHED) -> int:
         """서버가 꺼지며 끝나지 못한 작업을 실패로 정리한다. 정리한 건수를 돌려준다."""
-        marks = ",".join("?" * len(UNFINISHED))
-        rows = self._db.execute(f"SELECT data FROM jobs WHERE status IN ({marks})", UNFINISHED).fetchall()
+        marks = ",".join("?" * len(statuses))
+        rows = self._db.execute(f"SELECT data FROM jobs WHERE status IN ({marks})", statuses).fetchall()
         for (data,) in rows:
             job = self._load(data)
             job.status, job.error = "failed", reason

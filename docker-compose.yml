@@ -1,0 +1,8 @@
+# 로컬 개발용 인프라. 지금은 Celery 작업 큐의 브로커(Redis)만 있다.
+#   docker compose up -d
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped

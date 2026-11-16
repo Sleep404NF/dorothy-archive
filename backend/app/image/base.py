@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Awaitable, Callable
+
+# 진행률 콜백: (현재 스텝, 전체 스텝). 백엔드가 알 수 있을 때만 부른다.
+ProgressFn = Callable[[int, int], Awaitable[None]]
 
 
 @dataclass
@@ -36,7 +40,7 @@ class ImageBackend(ABC):
     uses_local_memory: bool = False
 
     @abstractmethod
-    async def generate(self, params: GenerationParams) -> GeneratedImage: ...
+    async def generate(self, params: GenerationParams, on_progress: ProgressFn | None = None) -> GeneratedImage: ...
 
     @abstractmethod
     async def health(self) -> bool: ...

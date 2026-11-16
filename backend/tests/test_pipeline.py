@@ -22,7 +22,7 @@ class FakeBackend(ImageBackend):
         self.uses_local_memory = local
         self.fail = fail
 
-    async def generate(self, params):
+    async def generate(self, params, on_progress=None):
         if self.fail:
             raise RuntimeError("boom")
         self.events.append(("generate", params.positive, params.seed))
