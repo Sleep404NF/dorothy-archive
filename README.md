@@ -67,6 +67,7 @@ full body, lake, night, moonlight, reflection
 | **태그 검증** | Danbooru 태그 사전(약 5.7만 개)으로 별칭을 대표 태그로 정리하고 없는 태그는 뺀다. 한국어 용어집으로 LLM에 힌트를 주고 정답 태그를 넣는다. 바뀐 내용은 기록에 보고서로 남긴다 |
 | **태그 직접 입력** | 완성된 프롬프트를 넣으면 LLM 단계를 건너뛴다 |
 | **작업 큐 + 실시간 진행률** | 작업 id 만 큐에 넣고 워커가 실행한다. `inline`(API 안에서 실행, Redis 불필요)과 `celery`(Redis + 별도 워커) 두 모드를 설정으로 고른다. 생성 스텝 진행률은 SSE 로 카드의 진행 바에 실시간 표시 |
+| **저장소 교체** | DB 는 SQLite ↔ PostgreSQL(JSONB), 이미지는 로컬 폴더 ↔ S3 호환 스토리지(RustFS, R2, B2 등)를 설정으로 바꾼다. 기존 데이터를 옮기는 스크립트 포함 |
 | **비동기 생성 작업** | 요청하면 바로 `202 Accepted`와 작업 ID를 돌려주고, 생성은 백그라운드에서 진행한다 |
 | **생성 기록 아카이브** | 요청·태그·시드·파라미터·소요 시간을 함께 저장하고 최신순으로 보여준다 |
 | **시드 재생성** | 저장된 프롬프트로 같은 시드 재생성, 또는 시드만 바꾼 변주 |
@@ -94,11 +95,12 @@ flowchart LR
     CU -.->|"WebSocket 진행률"| IB
     IB -.->|"예정"| NAI["NovelAI"]
     IB -.->|"예정"| GPU["원격 GPU 서버"]
-    P --> DB[("기록 저장소")]
-    P --> IMG["이미지 파일"]
+    P --> DB[("PostgreSQL<br/>(또는 SQLite)")]
+    P --> IMG[("S3 호환 · RustFS<br/>(또는 로컬 폴더)")]
 ```
 
 `inline` 모드에서는 Redis 와 워커 없이 API 프로세스 안에서 같은 Pipeline 이 돌고, 이벤트는 메모리 버스로 전달된다.
+아무 설정도 하지 않으면 **SQLite + 로컬 폴더 + inline 큐**로 Docker 없이 돌고, `.env` 만 바꾸면 **PostgreSQL + S3 호환 스토리지 + Celery** 로 바뀐다.
 
 ### 설계 포인트
 
@@ -129,7 +131,13 @@ flowchart LR
 - Redis 가 꺼져 있으면 오래 기다리지 않고 바로 `503` 을 돌려주고 작업은 실패로 기록한다
 - 이벤트는 놓쳐도 되는 알림이고 상태의 기준은 DB 다. 브라우저는 SSE 가 끊기면 2초 폴링으로 돌아가고, 다시 연결되면 목록을 맞춘다
 
-**6. 중단된 작업 정리**
+**6. 저장소 추상화 (DB / 이미지)**
+- DB 는 SQLAlchemy Core 로 테이블을 정의해서 **같은 코드가 SQLite 와 PostgreSQL 에서** 돈다. 작업은 목록 조회에 쓰는 값(id, 생성 시각, 상태)만 컬럼으로 두고 나머지는 `data` 한 칸에 넣는데, PostgreSQL 에서는 이 칸이 `JSONB` 다
+- 이미지는 `ImageStorage`(LocalStorage / S3Storage) 인터페이스 뒤에 둔다. DB 에는 `/images/{작업 id}.webp` 만 저장해서, 저장소를 바꿔도 기록은 그대로다. 로컬 개발은 Docker 의 RustFS, 나중에는 엔드포인트만 바꿔 Cloudflare R2 나 Backblaze B2 로 옮길 수 있다. 처음엔 MinIO 를 썼는데 공식 Docker 이미지가 내려가서 RustFS 로 바꿨고, 앱 코드는 S3 API 만 쓰기 때문에 한 줄도 바뀌지 않았다
+- 이미지 이름은 작업마다 고유하고 바뀌지 않아서 `Cache-Control: immutable` 로 내려준다
+- `scripts/migrate_storage.py` 로 SQLite + 로컬 폴더의 기존 데이터를 옮긴다. 여러 번 돌려도 중복되지 않는다
+
+**7. 중단된 작업 정리**
 서버가 생성 도중에 꺼지면, 다시 켤 때 끝나지 않은 작업을 `failed`로 정리해서 기록이 `generating` 상태로 남지 않게 한다. celery 모드에서는 API 를 재시작해도 대기 중인 작업은 브로커에 남아 있으므로 건드리지 않고, 워커가 시작할 때 실행 중이던 작업만 정리한다.
 
 ---
@@ -199,19 +207,28 @@ uvicorn app.main:app --reload
 cd frontend && npm install && npm run dev
 ```
 
-위 방법은 `inline` 모드(기본값)다. **celery 모드**로 돌리려면 Redis 를 띄우고, API 와 워커를 각각 실행한다.
+위 방법은 기본 구성(SQLite + 로컬 폴더 + inline 큐)이다. **PostgreSQL + S3 호환 스토리지(RustFS) + Celery** 로 돌리려면 Docker 로 인프라를 띄우고 `.env` 를 만든다.
 
 ```bash
-docker compose up -d                                   # Redis
+docker compose up -d --wait              # Redis, PostgreSQL, RustFS
+cp .env.example .env                     # 필요한 줄의 주석을 푼다
+
+# 지금까지 쌓인 SQLite 기록과 outputs/ 이미지를 옮기기 (선택)
 cd backend && source .venv/bin/activate
-DOROTHY_QUEUE=celery uvicorn app.main:app --reload     # API
-DOROTHY_QUEUE=celery celery -A app.worker worker --pool=solo --concurrency=1 --loglevel=info  # 워커 (다른 터미널)
+python scripts/migrate_storage.py --dry-run && python scripts/migrate_storage.py
+
+uvicorn app.main:app --reload                                              # API
+celery -A app.worker worker --pool=solo --concurrency=1 --loglevel=info    # 워커 (DOROTHY_QUEUE=celery 일 때, 다른 터미널)
 ```
+RustFS 웹 콘솔은 `http://127.0.0.1:9001/rustfs/console/` (아이디 `dorothy`, 비밀번호 `dorothy-secret`)에서 볼 수 있다. 현재 구성은 `GET /health` 의 `queue`, `database`, `storage` 로 확인한다.
 
 ### 테스트
 
 ```bash
 cd backend && pytest
+# PostgreSQL 테스트까지 돌리려면 (docker compose 의 postgres 에 테스트용 DB 를 만든 뒤)
+docker compose exec postgres createdb -U dorothy dorothy_test
+DOROTHY_TEST_DATABASE_URL=postgresql+psycopg://dorothy:dorothy@127.0.0.1:5432/dorothy_test pytest
 ```
 
 ### 환경 변수
@@ -228,8 +245,14 @@ cd backend && pytest
 | `DOROTHY_REDIS_URL` | `redis://127.0.0.1:6379/0` | celery 모드의 브로커와 이벤트 채널 |
 | `DOROTHY_IMAGE_FORMAT` | `webp` | 생성 이미지 저장 형식 (`webp` 또는 `png`) |
 | `DOROTHY_WEBP_QUALITY` | `90` | WebP 품질 |
-| `DOROTHY_DB` | `data/dorothy.db` | 기록 저장 위치 |
-| `DOROTHY_OUTPUT_DIR` | `outputs` | 이미지 저장 위치 |
+| `DOROTHY_DATABASE_URL` | (없음 → SQLite) | 예: `postgresql+psycopg://dorothy:dorothy@127.0.0.1:5432/dorothy` |
+| `DOROTHY_STORAGE` | `local` | 이미지 저장소 (`local` 또는 `s3`) |
+| `DOROTHY_S3_ENDPOINT` | (없음 → AWS) | S3 호환 엔드포인트. docker compose 의 RustFS: `http://127.0.0.1:9000` |
+| `DOROTHY_S3_BUCKET` | `dorothy` | 버킷 (없으면 만든다) |
+| `DOROTHY_S3_ACCESS_KEY` / `DOROTHY_S3_SECRET_KEY` | | 접근 키 |
+| `DOROTHY_S3_REGION` | `us-east-1` | R2 는 `auto` |
+| `DOROTHY_DB` | `data/dorothy.db` | SQLite 파일 위치 (`DOROTHY_DATABASE_URL` 이 없을 때) |
+| `DOROTHY_OUTPUT_DIR` | `outputs` | 로컬 이미지 폴더 (`DOROTHY_STORAGE=local` 일 때) |
 | `DOROTHY_TAG_VALIDATION` | `1` | `0`이면 태그 검증을 끈다 |
 | `DOROTHY_TAG_DICTIONARY` | `prompts/tags/danbooru_tags.csv.gz` | 태그 사전 |
 | `DOROTHY_GLOSSARY` | `prompts/glossary.ko.json` | 한국어 용어집 |
@@ -246,7 +269,7 @@ cd backend && pytest
 - [x] 캐릭터 / 스타일 키워드 프리셋(JSON) 조합
 - [x] 태그 사전 + 한국어 용어집으로 LLM 태그 변환 결과 검증
 - [x] 작업 큐 분리 (Celery + Redis) + 실시간 진행률(SSE)
-- [ ] 저장소 전환 (PostgreSQL + MinIO)
+- [x] 저장소 전환 (PostgreSQL + S3 호환 스토리지)
 - [ ] 로그인 (JWT)
 - [ ] GitHub Actions CI
 - [ ] 원격 GPU 서버 / NovelAI 백엔드
