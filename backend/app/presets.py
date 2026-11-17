@@ -16,12 +16,15 @@ import datetime
 import json
 import pathlib
 import re
-import sqlite3
 import uuid
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy.exc import IntegrityError
 
+from .db import make_engine, upsert
+from .db import presets as presets_table
 from .tagging.ollama_tagger import QUALITY_TAGS
 
 PresetType = Literal["character", "style"]
@@ -141,37 +144,27 @@ class PresetConflict(ValueError):
 
 
 class PresetStore:
-    """프리셋 저장소 (SQLite). 생성 기록과 같은 DB 파일의 presets 테이블을 쓴다."""
+    """프리셋 저장소. 생성 기록과 같은 DB 의 presets 테이블을 쓴다 (SQLite 또는 PostgreSQL)."""
 
-    def __init__(self, path: pathlib.Path | str):
-        if str(path) != ":memory:":
-            pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
-        self._db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS presets (
-                id         TEXT PRIMARY KEY,
-                type       TEXT NOT NULL,
-                name       TEXT NOT NULL,
-                data       TEXT NOT NULL,
-                UNIQUE (type, name)
-            )
-            """
-        )
+    def __init__(self, target: pathlib.Path | str):
+        self._engine = make_engine(target)
 
     def list(self, type: PresetType | None = None) -> list[Preset]:
-        where, args = ("WHERE type = ?", [type]) if type else ("", [])
-        rows = self._db.execute(f"SELECT data FROM presets {where} ORDER BY type, name", args).fetchall()
-        return [Preset.model_validate_json(r[0]) for r in rows]
+        query = select(presets_table.c.data).order_by(presets_table.c.type, presets_table.c.name)
+        if type:
+            query = query.where(presets_table.c.type == type)
+        with self._engine.connect() as conn:
+            return [Preset.model_validate(d) for d in conn.execute(query).scalars()]
 
     def get(self, preset_id: str) -> Preset | None:
-        row = self._db.execute("SELECT data FROM presets WHERE id = ?", (preset_id,)).fetchone()
-        return Preset.model_validate_json(row[0]) if row else None
+        with self._engine.connect() as conn:
+            data = conn.execute(select(presets_table.c.data).where(presets_table.c.id == preset_id)).scalar()
+        return Preset.model_validate(data) if data else None
 
     def create(self, data: PresetIn, preset_id: str | None = None) -> Preset:
         now = _now()
         preset = Preset(id=preset_id or uuid.uuid4().hex[:12], created_at=now, updated_at=now, **data.model_dump())
-        self._write("INSERT INTO presets (id, type, name, data) VALUES (?, ?, ?, ?)", preset)
+        self._write(insert(presets_table).values(**self._row(preset)), preset)
         return preset
 
     def update(self, preset_id: str, data: PresetIn) -> Preset | None:
@@ -179,14 +172,23 @@ class PresetStore:
         if not old:
             return None
         preset = Preset(id=old.id, created_at=old.created_at, updated_at=_now(), **data.model_dump())
-        self._write("UPDATE presets SET type = ?, name = ?, data = ? WHERE id = ?", preset, update=True)
+        row = self._row(preset)
+        row.pop("id")
+        self._write(update(presets_table).where(presets_table.c.id == preset_id).values(**row), preset)
         return preset
 
+    def put(self, preset: Preset) -> None:
+        """id 와 시각까지 그대로 넣거나 덮어쓴다 (다른 DB 에서 옮겨 올 때 쓴다)."""
+        stmt = upsert(self._engine, presets_table, self._row(preset), conflict=["id"], update=["type", "name", "data"])
+        self._write(stmt, preset)
+
     def delete(self, preset_id: str) -> bool:
-        return self._db.execute("DELETE FROM presets WHERE id = ?", (preset_id,)).rowcount > 0
+        with self._engine.begin() as conn:
+            return conn.execute(delete(presets_table).where(presets_table.c.id == preset_id)).rowcount > 0
 
     def count(self) -> int:
-        return self._db.execute("SELECT COUNT(*) FROM presets").fetchone()[0]
+        with self._engine.connect() as conn:
+            return conn.execute(select(func.count()).select_from(presets_table)).scalar_one()
 
     def seed(self, directory: pathlib.Path | None) -> int:
         """저장소가 비어 있을 때만 directory 의 *.json 프리셋을 넣는다. 넣은 개수를 돌려준다.
@@ -204,12 +206,15 @@ class PresetStore:
         return added
 
     def close(self) -> None:
-        self._db.close()
+        self._engine.dispose()
 
-    def _write(self, sql: str, preset: Preset, update: bool = False) -> None:
-        row = (preset.type, preset.name, preset.model_dump_json(), preset.id)
-        args = row if update else (preset.id, preset.type, preset.name, preset.model_dump_json())
+    @staticmethod
+    def _row(preset: Preset) -> dict:
+        return {"id": preset.id, "type": preset.type, "name": preset.name, "data": preset.model_dump(mode="json")}
+
+    def _write(self, stmt, preset: Preset) -> None:
         try:
-            self._db.execute(sql, args)
-        except sqlite3.IntegrityError:
+            with self._engine.begin() as conn:
+                conn.execute(stmt)
+        except IntegrityError:
             raise PresetConflict(f"a {preset.type} preset named {preset.name!r} already exists") from None

@@ -23,10 +23,11 @@ from typing import Callable, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .image import GenerationParams, ImageBackend
-from .image.encode import ImageFormat, encode
+from .image.encode import MEDIA_TYPES, ImageFormat, encode
 from .events import EventBus, InMemoryBus
 from .presets import Preset, compose, merge_negative, split_tags
 from .queue import InlineQueue, JobQueue, QueueUnavailable
+from .storage import ImageStorage, LocalStorage
 from .store import JobStore
 from .tagging.ollama_tagger import NEGATIVE_PROMPT, NSFW_NEGATIVE_TAG, TagResult
 from .tagging.refine import TagRefiner
@@ -92,7 +93,7 @@ class Pipeline:
         self,
         backend: ImageBackend,
         tagger: Tagger,
-        output_dir: pathlib.Path,
+        images: ImageStorage | pathlib.Path,
         store: JobStore,
         refiner: TagRefiner | None = None,
         image_format: ImageFormat = "png",
@@ -107,6 +108,8 @@ class Pipeline:
         none    - 건드리지 않음 (celery 모드의 API: 실행은 워커 몫이다)
         """
         self.backend = backend
+        # 경로를 주면 로컬 폴더에 저장한다 (테스트와 기본 설정).
+        self.images = images if isinstance(images, ImageStorage) else LocalStorage(images)
         self.queue = queue or InlineQueue(self.execute)
         self.events = events or InMemoryBus()
         self._image_format = image_format
@@ -119,7 +122,6 @@ class Pipeline:
         elif recover == "running":
             store.fail_unfinished(reason, statuses=("tagging", "generating"))
         self._tagger = tagger
-        self._output_dir = output_dir
         self._lock = asyncio.Lock()
         self._image_model_loaded = False
 
@@ -255,9 +257,9 @@ class Pipeline:
                 job.generation_seconds = round(time.monotonic() - started, 1)
 
                 data, ext = encode(image.data, self._image_format, self._webp_quality)
-                self._output_dir.mkdir(parents=True, exist_ok=True)
-                (self._output_dir / f"{job.id}.{ext}").write_bytes(data)
-                job.image_url = f"/images/{job.id}.{ext}"
+                key = f"{job.id}.{ext}"
+                await asyncio.to_thread(self.images.put, key, data, MEDIA_TYPES[ext])
+                job.image_url = f"/images/{key}"
                 job.status = "done"
             except Exception as exc:  # 작업 실패는 서버를 죽이지 않고 job 에 남긴다.
                 job.status = "failed"

@@ -1,8 +1,47 @@
-# 로컬 개발용 인프라. 지금은 Celery 작업 큐의 브로커(Redis)만 있다.
+# 로컬 개발용 인프라: Redis(Celery 브로커), PostgreSQL(생성 기록·프리셋), RustFS(이미지, S3 호환)
 #   docker compose up -d
+# 쓰려면 .env.example 을 .env 로 복사하고 필요한 줄의 주석을 푼다.
 services:
   redis:
     image: redis:7-alpine
     ports:
       - "127.0.0.1:6379:6379"
     restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: dorothy
+      POSTGRES_PASSWORD: dorothy
+      POSTGRES_DB: dorothy
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dorothy"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # 이미지 저장소 (S3 호환). MinIO 공식 이미지가 Docker Hub·Quay 에서 내려가서 RustFS 로 바꿨다.
+  # 앱은 S3 API 만 쓰므로 MinIO, R2, B2 와 그대로 바꿔 끼울 수 있다.
+  s3:
+    image: rustfs/rustfs:1.0.0
+    command: /data
+    environment:
+      RUSTFS_ACCESS_KEY: dorothy
+      RUSTFS_SECRET_KEY: dorothy-secret
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
+    ports:
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # 웹 콘솔 (http://127.0.0.1:9001/rustfs/console/)
+    volumes:
+      - s3-data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  s3-data:

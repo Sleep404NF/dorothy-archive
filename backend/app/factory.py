@@ -9,6 +9,7 @@ from .events import EventBus
 from .image import create_backend
 from .pipeline import Pipeline
 from .queue import JobQueue
+from .storage import create_storage
 from .store import JobStore
 from .tagging.ollama_tagger import to_tags
 from .tagging.refine import load_refiner
@@ -25,8 +26,8 @@ def build_pipeline(
         tagger=lambda text, keep_alive: to_tags(
             text, model=settings.ollama_model, host=settings.ollama_host, keep_alive=keep_alive
         ),
-        output_dir=settings.output_dir,
-        store=JobStore(settings.db_path),
+        images=create_storage(settings),
+        store=JobStore(settings.database_target),
         image_format="png" if settings.image_format == "png" else "webp",
         webp_quality=settings.webp_quality,
         refiner=load_refiner(settings.tag_dictionary_path, settings.tag_extra_path, settings.glossary_path)
